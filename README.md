@@ -93,6 +93,13 @@ a convenient backup that silently contains every password.
 Use `--include-env` only when you intentionally want real `.env` files in the
 archive and know where the archive will be stored.
 
+## Support
+
+If `compose-safebox` saved you time or helped protect your homelab, you can
+support the project with a donation:
+
+[Donate via PayPal](https://www.paypal.com/donate/?hosted_button_id=95T36AZHYRJ82)
+
 ## Development
 
 ```bash
