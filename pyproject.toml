@@ -1,0 +1,48 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "compose-safebox"
+version = "0.1.0"
+description = "A boring, safe backup planner for Docker Compose homelabs."
+readme = "README.md"
+requires-python = ">=3.9"
+license = "MIT"
+authors = [
+  { name = "Qintaris" }
+]
+keywords = ["docker", "compose", "backup", "homelab", "selfhosted"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: System Administrators",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: System :: Archiving :: Backup",
+  "Topic :: Utilities",
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+]
+
+[project.scripts]
+compose-safebox = "compose_safebox.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/Qintaris/compose-safebox"
+Repository = "https://github.com/Qintaris/compose-safebox"
+Issues = "https://github.com/Qintaris/compose-safebox/issues"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
