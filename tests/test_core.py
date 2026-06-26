@@ -94,3 +94,108 @@ services:
     assert "compose-safebox restore plan" in plan
     assert "whoami" in plan
     assert "docker compose up -d" in plan
+
+
+def test_scan_detects_multiple_env_files_and_long_mount_with_target_first(tmp_path: Path) -> None:
+    project = tmp_path / "actual"
+    write(project / "env" / "common.env", "A=1\n")
+    write(project / "env" / "prod.env", "B=1\n")
+    write(project / "config" / "settings.yml", "ok: true\n")
+    write(
+        project / "compose.yaml",
+        """
+services:
+  app:
+    image: example/app
+    env_file:
+      - ./env/common.env
+      - ./env/prod.env
+    volumes:
+      - type: bind
+        target: /app/config
+        source: ./config
+""".strip(),
+    )
+
+    found = scan(tmp_path)[0]
+
+    assert str(project / "env" / "common.env") in found.env_files
+    assert str(project / "env" / "prod.env") in found.env_files
+    assert any(
+        mount.kind == "bind"
+        and mount.source == str(project / "config")
+        and mount.target == "/app/config"
+        for mount in found.mounts
+    )
+
+
+def test_backup_preserves_env_file_relative_paths_when_redacting(tmp_path: Path) -> None:
+    project = tmp_path / "envpaths"
+    write(project / "env" / "common.env", "A=1\n")
+    write(project / "env" / "prod.env", "B=1\n")
+    write(
+        project / "compose.yml",
+        """
+services:
+  app:
+    image: example/app
+    env_file:
+      - ./env/common.env
+      - ./env/prod.env
+""".strip(),
+    )
+    archive = tmp_path / "backup.tar.gz"
+
+    create_backup(tmp_path, archive)
+
+    with tarfile.open(archive, "r:*") as tar:
+        names = set(tar.getnames())
+
+    assert "files/envpaths/env/common.env.redacted" in names
+    assert "files/envpaths/env/prod.env.redacted" in names
+    assert "files/envpaths/common.env.redacted" not in names
+
+
+def test_scan_ignores_non_volume_lists_that_contain_colons(tmp_path: Path) -> None:
+    project = tmp_path / "commands"
+    write(
+        project / "compose.yml",
+        """
+services:
+  app:
+    image: example/app
+    command:
+      - "--log-format=json:pretty"
+      - "--listen=:8080"
+""".strip(),
+    )
+
+    found = scan(tmp_path)[0]
+
+    assert found.mounts == []
+
+
+def test_backup_preserves_nested_bind_mount_names_to_avoid_collisions(tmp_path: Path) -> None:
+    project = tmp_path / "nested"
+    write(project / "one" / "data" / "a.txt", "one")
+    write(project / "two" / "data" / "b.txt", "two")
+    write(
+        project / "compose.yml",
+        """
+services:
+  app:
+    image: example/app
+    volumes:
+      - ./one/data:/one
+      - ./two/data:/two
+""".strip(),
+    )
+    archive = tmp_path / "backup.tar.gz"
+
+    create_backup(tmp_path, archive)
+
+    with tarfile.open(archive, "r:*") as tar:
+        names = set(tar.getnames())
+
+    assert "files/nested/bind-mounts/one/data/a.txt" in names
+    assert "files/nested/bind-mounts/two/data/b.txt" in names

@@ -258,10 +258,27 @@ def _detect_env_files(project_root: Path, compose_text: str) -> list[Path]:
         if path.exists():
             candidates.append(path.resolve())
 
-    for match in re.finditer(r"env_file:\s*(?:\n\s*-\s*)?([^\n#]+)", compose_text):
-        value = _clean_yaml_scalar(match.group(1))
-        if value:
-            candidates.append(_resolve_path(project_root, value))
+    lines = compose_text.splitlines()
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped.startswith("env_file:"):
+            continue
+        inline = stripped.split(":", 1)[1].strip()
+        if inline:
+            candidates.append(_resolve_path(project_root, inline))
+            continue
+        block_indent = _indent(line)
+        for child in _indented_block(lines, index + 1, block_indent):
+            child_stripped = child.strip()
+            if child_stripped.startswith("- "):
+                value = child_stripped[2:]
+            elif ":" in child_stripped:
+                continue
+            else:
+                value = child_stripped
+            value = _clean_yaml_scalar(value)
+            if value:
+                candidates.append(_resolve_path(project_root, value))
 
     return sorted(set(candidates))
 
@@ -269,19 +286,32 @@ def _detect_env_files(project_root: Path, compose_text: str) -> list[Path]:
 def _detect_mounts(project_root: Path, compose_text: str) -> list[Mount]:
     mounts: list[Mount] = []
     lines = compose_text.splitlines()
+    volume_block_indent: Optional[int] = None
     for index, line in enumerate(lines):
         stripped = line.strip()
-        if stripped.startswith("- "):
-            mount = _parse_short_mount(project_root, stripped[2:])
-            if mount is not None:
-                mounts.append(mount)
-        if re.match(r"source:\s*", stripped):
-            mount = _parse_long_mount(project_root, lines[index : index + 5])
+        if not stripped or stripped.startswith("#"):
+            continue
+        line_indent = _indent(line)
+        if volume_block_indent is not None and line_indent <= volume_block_indent:
+            volume_block_indent = None
+        if re.match(r"volumes:\s*$", stripped):
+            volume_block_indent = line_indent
+            continue
+        if volume_block_indent is not None and stripped.startswith("- "):
+            item_lines = [line, *_indented_block(lines, index + 1, line_indent)]
+            mount = _parse_volume_item(project_root, item_lines)
             if mount is not None:
                 mounts.append(mount)
 
     unique = {(mount.source, mount.target, mount.kind): mount for mount in mounts}
     return sorted(unique.values(), key=lambda item: (item.kind, item.source, item.target or ""))
+
+
+def _parse_volume_item(project_root: Path, lines: list[str]) -> Optional[Mount]:
+    first = lines[0].strip()[2:].strip()
+    if ":" in first and not first.startswith(("type:", "source:", "src:", "target:", "dst:")):
+        return _parse_short_mount(project_root, first)
+    return _parse_long_mount(project_root, lines)
 
 
 def _parse_short_mount(project_root: Path, value: str) -> Optional[Mount]:
@@ -299,7 +329,7 @@ def _parse_long_mount(project_root: Path, lines: list[str]) -> Optional[Mount]:
     target = None
     is_bind = False
     for line in lines:
-        stripped = line.strip()
+        stripped = line.strip().removeprefix("-").strip()
         if stripped == "type: bind":
             is_bind = True
         elif stripped.startswith("source:") or stripped.startswith("src:"):
@@ -351,11 +381,15 @@ def _copy_project(
 
     for env_file in project.env_files:
         env_path = Path(env_file)
+        archive_name = _env_archive_name(Path(project.root), env_path)
         if env_path.name == ".env.example" or include_env:
             if env_path.exists():
-                shutil.copy2(env_path, destination / env_path.name)
+                target = destination / archive_name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(env_path, target)
         else:
-            redacted = destination / f"{env_path.name}.redacted"
+            redacted = destination / archive_name.with_name(f"{archive_name.name}.redacted")
+            redacted.parent.mkdir(parents=True, exist_ok=True)
             redacted.write_text(
                 "# compose-safebox intentionally did not copy this secret file.\n",
                 encoding="utf-8",
@@ -370,7 +404,7 @@ def _copy_project(
             if include_missing:
                 (mounts_root / _safe_name(source.name)).mkdir(parents=True, exist_ok=True)
             continue
-        relative_target = mounts_root / _safe_name(source.name or "root")
+        relative_target = mounts_root / _mount_archive_name(Path(project.root), source)
         if source.is_dir():
             shutil.copytree(
                 source,
@@ -405,8 +439,51 @@ def _resolve_path(project_root: Path, value: str) -> Path:
     return path.resolve()
 
 
+def _indented_block(lines: list[str], start: int, parent_indent: int) -> list[str]:
+    block = []
+    for line in lines[start:]:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if _indent(line) <= parent_indent:
+            break
+        block.append(line)
+    return block
+
+
+def _indent(line: str) -> int:
+    return len(line) - len(line.lstrip(" "))
+
+
 def _clean_yaml_scalar(value: str) -> str:
     return value.strip().strip("'\"")
+
+
+def _mount_archive_name(project_root: Path, source: Path) -> Path:
+    try:
+        relative = source.resolve().relative_to(project_root.resolve())
+        parts = relative.parts
+    except ValueError:
+        parts = ("external", *source.resolve().parts[1:])
+    safe_parts = [_safe_name(part) for part in parts if part not in ("", ".")]
+    return Path(*safe_parts) if safe_parts else Path("root")
+
+
+def _env_archive_name(project_root: Path, source: Path) -> Path:
+    try:
+        relative = source.resolve().relative_to(project_root.resolve())
+        parts = relative.parts
+    except ValueError:
+        parts = (source.name,)
+    safe_parts = [_safe_path_part(part) for part in parts if part not in ("", ".")]
+    return Path(*safe_parts) if safe_parts else Path(_safe_path_part(source.name))
+
+
+def _safe_path_part(value: str) -> str:
+    safe = re.sub(r"[^A-Za-z0-9_.-]+", "-", value)
+    if safe in ("", ".", ".."):
+        return "item"
+    return safe
 
 
 def _safe_name(value: str) -> str:
