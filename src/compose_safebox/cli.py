@@ -35,6 +35,11 @@ def main(argv: Optional[list[str]] = None) -> None:
         action="store_true",
         help="Include real .env files. Off by default to avoid secret leaks.",
     )
+    backup_parser.add_argument(
+        "--i-understand-env-secrets",
+        action="store_true",
+        help="Required with --include-env to confirm the archive may contain secrets.",
+    )
     backup_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
 
     restore_parser = subparsers.add_parser(
@@ -55,6 +60,8 @@ def main(argv: Optional[list[str]] = None) -> None:
         if any(item["level"] == "error" for item in findings):
             sys.exit(1)
     elif args.command == "backup":
+        if args.include_env and not args.i_understand_env_secrets:
+            parser.error("--include-env can archive secrets; add --i-understand-env-secrets to confirm")
         manifest = create_backup(
             Path(args.root),
             Path(args.out),

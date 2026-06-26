@@ -90,8 +90,8 @@ compose-safebox scan --root /srv --json
 The default behavior is designed to avoid the classic homelab mistake: creating
 a convenient backup that silently contains every password.
 
-Use `--include-env` only when you intentionally want real `.env` files in the
-archive and know where the archive will be stored.
+Use `--include-env --i-understand-env-secrets` only when you intentionally want
+real `.env` files in the archive and know where the archive will be stored.
 
 ## Support
 

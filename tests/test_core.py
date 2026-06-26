@@ -3,6 +3,9 @@ from __future__ import annotations
 import tarfile
 from pathlib import Path
 
+import pytest
+
+from compose_safebox.cli import main
 from compose_safebox.core import create_backup, restore_plan, scan
 
 
@@ -199,3 +202,28 @@ services:
 
     assert "files/nested/bind-mounts/one/data/a.txt" in names
     assert "files/nested/bind-mounts/two/data/b.txt" in names
+
+
+def test_cli_requires_explicit_secret_confirmation_for_include_env(tmp_path: Path) -> None:
+    archive = tmp_path / "backup.tar.gz"
+
+    with pytest.raises(SystemExit) as exc:
+        main(["backup", "--root", str(tmp_path), "--out", str(archive), "--include-env"])
+
+    assert exc.value.code == 2
+
+
+def test_cli_allows_include_env_with_double_confirmation(tmp_path: Path) -> None:
+    archive = tmp_path / "backup.tar.gz"
+
+    main([
+        "backup",
+        "--root",
+        str(tmp_path),
+        "--out",
+        str(archive),
+        "--include-env",
+        "--i-understand-env-secrets",
+    ])
+
+    assert archive.exists()
